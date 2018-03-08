@@ -291,7 +291,9 @@ class Main {
 			getParamsForPath(parameterPath, fileStore);
 		}
 
-		fileStore.save();
+		if (!fileStore.getKeys().isEmpty()) {
+			fileStore.save();
+		}
 	}
 
 	private void getParamsForPath(final String parameterPath, final FileStore fileStore) {
