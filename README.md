@@ -1,7 +1,7 @@
-aws-ssm-config
-==============
+ssmple CLI
+==========
 
-Config File Management using AWS SSM Shared Parameter Store, serialized to JSON, YAML, or Java properties files on hosts.
+Config File Management tool using AWS SSM Shared Parameter Store, serialized to JSON, YAML, or Java properties files on hosts.
 
 Installation
 ------------
@@ -9,15 +9,15 @@ Installation
 Requires Java 8.
 
 ```
-./gradlew distZip
-unzip build/distributions/aws-ssm-config.zip -d <path to target directory>
+./gradlew assemble
+tar -xf build/distributions/ssmple*.tar -C <path to target directory>
 ```
 
 Usage
 -----
 
 ```
-./bin/aws-ssm-config --profile myprofile --region us-east-1 -C /ep/conf \
+./bin/ssmple --profile myprofile --region us-east-1 -C /ep/conf \
     -f ep.properties \
     -f ep.override.properties \
     -s /ep/ecs/conf \

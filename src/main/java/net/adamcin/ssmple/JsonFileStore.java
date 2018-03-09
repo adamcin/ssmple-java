@@ -15,29 +15,34 @@
  *
  */
 
+package net.adamcin.ssmple;
+
 import java.io.File;
-import java.io.FileInputStream;
-import java.io.FileOutputStream;
 import java.io.IOException;
+import java.util.LinkedHashMap;
+import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
-import java.util.Properties;
 import java.util.Set;
 
-class JavaPropertiesFileStore extends AbstractFileStore {
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.SerializationFeature;
 
-	private final Properties properties = new Properties();
+class JsonFileStore extends AbstractFileStore {
+	private Map<String, String> bindings = new LinkedHashMap<>();
 
-	JavaPropertiesFileStore(final File file) {
+	JsonFileStore(final File file) {
 		super(file);
 	}
 
 	@Override
 	public void load() throws IOException {
-		properties.clear();
 		if (getFile().exists()) {
 			assertFileIsReadable();
-			try (FileInputStream fis = new FileInputStream(getFile())) {
-				properties.load(fis);
+			bindings.clear();
+			Map<?, ?> untypedMap = new ObjectMapper().readValue(getFile(), LinkedHashMap.class);
+			for (Map.Entry<?, ?> untypedEntry : untypedMap.entrySet()) {
+				bindings.put(Objects.toString(untypedEntry.getKey()), Objects.toString(untypedEntry.getValue()));
 			}
 		}
 	}
@@ -45,23 +50,23 @@ class JavaPropertiesFileStore extends AbstractFileStore {
 	@Override
 	public void save() throws IOException {
 		assertFileIsWritable();
-		try (FileOutputStream fos = new FileOutputStream(getFile())) {
-			properties.store(fos, "Saved from SSM");
-		}
+		ObjectMapper mapper = new ObjectMapper();
+		mapper.enable(SerializationFeature.INDENT_OUTPUT);
+		mapper.writeValue(getFile(), bindings);
 	}
 
 	@Override
 	public Set<String> getKeys() {
-		return properties.stringPropertyNames();
+		return bindings.keySet();
 	}
 
 	@Override
 	public Optional<String> getValue(final String key) {
-		return Optional.ofNullable(properties.getProperty(key));
+		return Optional.ofNullable(bindings.get(key));
 	}
 
 	@Override
 	public void putParam(final String key, final String value) {
-		properties.setProperty(key, value);
+		bindings.put(key, value);
 	}
 }

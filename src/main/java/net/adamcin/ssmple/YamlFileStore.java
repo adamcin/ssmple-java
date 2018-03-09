@@ -15,22 +15,36 @@
  *
  */
 
+package net.adamcin.ssmple;
+
 import java.io.File;
+import java.io.FileInputStream;
+import java.io.FileOutputStream;
 import java.io.IOException;
+import java.io.OutputStreamWriter;
+import java.nio.charset.Charset;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
+import java.util.stream.StreamSupport;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.SerializationFeature;
+import org.yaml.snakeyaml.DumperOptions;
+import org.yaml.snakeyaml.Yaml;
 
-class JsonFileStore extends AbstractFileStore {
-	private Map<String, String> bindings = new LinkedHashMap<>();
+class YamlFileStore extends AbstractFileStore {
+	private final Map<String, String> bindings = new LinkedHashMap<>();
 
-	JsonFileStore(final File file) {
+	private final Yaml yaml;
+
+	YamlFileStore(final File file) {
 		super(file);
+		DumperOptions dumperOptions = new DumperOptions();
+		dumperOptions.setPrettyFlow(true);
+		dumperOptions.setExplicitStart(true);
+		dumperOptions.setExplicitEnd(true);
+		this.yaml = new Yaml(dumperOptions);
 	}
 
 	@Override
@@ -38,9 +52,15 @@ class JsonFileStore extends AbstractFileStore {
 		if (getFile().exists()) {
 			assertFileIsReadable();
 			bindings.clear();
-			Map<?, ?> untypedMap = new ObjectMapper().readValue(getFile(), LinkedHashMap.class);
-			for (Map.Entry<?, ?> untypedEntry : untypedMap.entrySet()) {
-				bindings.put(Objects.toString(untypedEntry.getKey()), Objects.toString(untypedEntry.getValue()));
+			try (FileInputStream fis = new FileInputStream(getFile())) {
+				StreamSupport.stream(yaml.loadAll(fis).spliterator(), false)
+						.filter(it -> it instanceof Map)
+						.map(it -> (Map<?, ?>) it)
+						.forEach(untypedMap -> {
+							for (Map.Entry<?, ?> untypedEntry : untypedMap.entrySet()) {
+								bindings.put(Objects.toString(untypedEntry.getKey()), Objects.toString(untypedEntry.getValue()));
+							}
+						});
 			}
 		}
 	}
@@ -48,9 +68,11 @@ class JsonFileStore extends AbstractFileStore {
 	@Override
 	public void save() throws IOException {
 		assertFileIsWritable();
-		ObjectMapper mapper = new ObjectMapper();
-		mapper.enable(SerializationFeature.INDENT_OUTPUT);
-		mapper.writeValue(getFile(), bindings);
+		try (OutputStreamWriter writer =
+					 new OutputStreamWriter(
+							 new FileOutputStream(getFile()), Charset.forName("UTF-8"))) {
+			writer.write(yaml.dumpAsMap(bindings));
+		}
 	}
 
 	@Override
