@@ -27,6 +27,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
 import com.amazonaws.auth.DefaultAWSCredentialsProviderChain;
@@ -43,6 +44,16 @@ import com.amazonaws.services.simplesystemsmanagement.model.PutParameterRequest;
  * Selects properties from SSM and syncs values to .properties files on the filesystem.
  */
 class Main {
+	/**
+	 * Used to detect an empty string or all spaces.
+	 */
+	static final Pattern PATTERN_SHOULD_ESCAPE = Pattern.compile("^ *$");
+
+	/**
+	 * Used to detect all spaces.
+	 */
+	static final Pattern PATTERN_SHOULD_UNESCAPE = Pattern.compile("^ +$");
+
 	/**
 	 * Turns out this can be between 1 and 10. I'm so glad I made it a parameter.
 	 */
@@ -304,7 +315,7 @@ class Main {
 	 * @return unescaped value
 	 */
 	private static String unescapeValueAfterGet(final String value) {
-		return value.matches("^ +$") ? value.substring(0, value.length() - 1) : value;
+		return PATTERN_SHOULD_UNESCAPE.matcher(value).find() ? value.substring(0, value.length() - 1) : value;
 	}
 
 	/**
@@ -313,7 +324,7 @@ class Main {
 	 * @return escaped value
 	 */
 	private static String escapeValueBeforePut(final String value) {
-		return value.matches("^ *$") ? value + " " : value;
+		return PATTERN_SHOULD_ESCAPE.matcher(value).find() ? value + " " : value;
 	}
 
 	private void getParamsForPath(final String parameterPath, final FileStore fileStore) {
