@@ -435,15 +435,15 @@ class Main {
 	private Map<String, Parameter> findAllParametersForPath(final Map<String, Parameter> accumulator, final String parameterPath,
 			final String nextToken) {
 		GetParametersByPathRequest req = new GetParametersByPathRequest()
-				.withMaxResults(fetchSize)
+				.withMaxResults(getFetchSize())
 				.withPath(parameterPath)
 				.withWithDecryption(true)
 				.withNextToken(nextToken)
 				.withRecursive(false);
 		GetParametersByPathResult result = this.ssm.getParametersByPath(req);
 		List<Parameter> resultParameters = result.getParameters();
-		boolean isLast = resultParameters.isEmpty() || resultParameters.size() < fetchSize;
 		String fetchToken = result.getNextToken();
+		boolean isLast = fetchToken == null || fetchToken.isEmpty() || resultParameters.isEmpty() || resultParameters.size() < getFetchSize();
 		for (Parameter parameter : resultParameters) {
 			accumulator.put(parameter.getName(), parameter);
 		}
