@@ -315,7 +315,7 @@ class Main {
 	 * @return unescaped value
 	 */
 	private static String unescapeValueAfterGet(final String value) {
-		return PATTERN_SHOULD_UNESCAPE.matcher(value).find() ? value.substring(0, value.length() - 1) : value;
+		return PATTERN_SHOULD_UNESCAPE.matcher(value).matches() ? value.substring(0, value.length() - 1) : value;
 	}
 
 	/**
@@ -324,7 +324,7 @@ class Main {
 	 * @return escaped value
 	 */
 	private static String escapeValueBeforePut(final String value) {
-		return PATTERN_SHOULD_ESCAPE.matcher(value).find() ? value + " " : value;
+		return PATTERN_SHOULD_ESCAPE.matcher(value).matches() ? value + " " : value;
 	}
 
 	private void getParamsForPath(final String parameterPath, final FileStore fileStore) {
