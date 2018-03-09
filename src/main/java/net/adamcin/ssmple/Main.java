@@ -298,17 +298,35 @@ class Main {
 		}
 	}
 
+	/**
+	 * If value is all spaces, subtract a space to reconstruct the original value for export.
+	 * @param value parameter value.
+	 * @return unescaped value
+	 */
+	private static String unescapeValueAfterGet(final String value) {
+		return value.matches("^ +$") ? value.substring(0, value.length() - 1) : value;
+	}
+
+	/**
+	 * If value is the empty string or all spaces, add a space so the value is non-empty for SSM.
+	 * @param value parameter value.
+	 * @return escaped value
+	 */
+	private static String escapeValueBeforePut(final String value) {
+		return value.matches("^ *$") ? value + " " : value;
+	}
+
 	private void getParamsForPath(final String parameterPath, final FileStore fileStore) {
 		findAllParametersForPath(parameterPath).values().stream()
 				.filter(it -> it.getName().startsWith(parameterPath + "/"))
-				.forEach(it -> fileStore.putParam(it.getName().substring(parameterPath.length() + 1), it.getValue()));
+				.forEach(it -> fileStore.putParam(it.getName().substring(parameterPath.length() + 1), unescapeValueAfterGet(it.getValue())));
 	}
 
 	// -----------
 	// PUT methods
 	// -----------
 
-	private void doPut() throws IOException {
+	private void doPut() {
 		if (this.getParamPathPrefixes().size() != 1) {
 			throw new IllegalArgumentException("put command requires exactly one -s/--starts-with argument.");
 		}
@@ -318,13 +336,13 @@ class Main {
 		}
 	}
 
-	private void putParamsPerFile(final String filename, final FileStore store) throws IOException {
+	private void putParamsPerFile(final String filename, final FileStore store) {
 		for (String key : store.getKeys()) {
 			final String name = buildParameterPath(this.paramPathPrefixes.get(0), filename, key);
 			store.getValue(key).ifPresent(value -> {
 				PutParameterRequest req = new PutParameterRequest()
 						.withName(name)
-						.withValue(value)
+						.withValue(escapeValueBeforePut(value))
 						.withOverwrite(isOverwritePut());
 
 				if (getKeyId() != null) {
