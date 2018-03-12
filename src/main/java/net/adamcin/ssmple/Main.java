@@ -26,18 +26,28 @@ import java.util.Iterator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
-import java.util.regex.Pattern;
 import java.util.stream.Collectors;
+import java.util.stream.IntStream;
+import java.util.stream.Stream;
 
 import com.amazonaws.auth.DefaultAWSCredentialsProviderChain;
+import com.amazonaws.services.kms.AWSKMS;
+import com.amazonaws.services.kms.AWSKMSClientBuilder;
+import com.amazonaws.services.kms.model.AliasListEntry;
+import com.amazonaws.services.kms.model.ListAliasesResult;
 import com.amazonaws.services.simplesystemsmanagement.AWSSimpleSystemsManagement;
 import com.amazonaws.services.simplesystemsmanagement.AWSSimpleSystemsManagementClientBuilder;
 import com.amazonaws.services.simplesystemsmanagement.model.DeleteParametersRequest;
+import com.amazonaws.services.simplesystemsmanagement.model.DescribeParametersRequest;
+import com.amazonaws.services.simplesystemsmanagement.model.DescribeParametersResult;
 import com.amazonaws.services.simplesystemsmanagement.model.GetParametersByPathRequest;
 import com.amazonaws.services.simplesystemsmanagement.model.GetParametersByPathResult;
 import com.amazonaws.services.simplesystemsmanagement.model.Parameter;
 import com.amazonaws.services.simplesystemsmanagement.model.ParameterType;
+import com.amazonaws.services.simplesystemsmanagement.model.ParametersFilter;
+import com.amazonaws.services.simplesystemsmanagement.model.ParametersFilterKey;
 import com.amazonaws.services.simplesystemsmanagement.model.PutParameterRequest;
 
 /**
@@ -45,14 +55,9 @@ import com.amazonaws.services.simplesystemsmanagement.model.PutParameterRequest;
  */
 class Main {
 	/**
-	 * Used to detect an empty string or all spaces.
+	 * Property Key / Param Name suffix used for serializing KMS key IDs alongside SecureString values.
 	 */
-	static final Pattern PATTERN_SHOULD_ESCAPE = Pattern.compile("^ *$");
-
-	/**
-	 * Used to detect all spaces.
-	 */
-	static final Pattern PATTERN_SHOULD_UNESCAPE = Pattern.compile("^ +$");
+	static final String KEY_ID_SUFFIX = "_SecureStringKeyId";
 
 	/**
 	 * Turns out this can be between 1 and 10. I'm so glad I made it a parameter.
@@ -119,18 +124,31 @@ class Main {
 
 	private boolean overwritePut;
 
-	private String keyId;
+	private String keyIdPut;
+
+	private boolean noStoreSecureString;
+
+	private boolean noPutSecureString;
 
 	private Map<String, FileStore> fileStores = new LinkedHashMap<>();
+
+	private final AWSKMSClientBuilder kmsBuilder;
+
+	private AWSKMS kms;
+
+	private final Map<String, String> aliasesToKeys = new HashMap<>();
+
+	private final Map<String, String> keysToAliases = new HashMap<>();
 
 	/**
 	 * Pass in the ssmBuilder so it can be modified by CLI params.
 	 *
 	 * @param ssmBuilder the SSM client builder
 	 */
-	Main(final AWSSimpleSystemsManagementClientBuilder ssmBuilder) {
+	Main(final AWSSimpleSystemsManagementClientBuilder ssmBuilder, final AWSKMSClientBuilder kmsBuilder) {
 		this.ssmBuilder = ssmBuilder;
 		this.confDir = new File(DEFAULT_CONF_DIR);
+		this.kmsBuilder = kmsBuilder;
 	}
 
 	/**
@@ -237,17 +255,109 @@ class Main {
 	 *
 	 * @return the value
 	 */
-	String getKeyId() {
-		return keyId;
+	String getKeyIdPut() {
+		return keyIdPut;
 	}
 
 	/**
 	 * Set the value.
 	 *
-	 * @param keyId the value
+	 * @param keyIdPut the value
 	 */
-	void setKeyId(final String keyId) {
-		this.keyId = keyId;
+	void setKeyIdPutAll(final String keyIdPut) {
+		this.keyIdPut = keyIdPut;
+	}
+
+	/**
+	 * Get the value.
+	 *
+	 * @return the value
+	 */
+	public boolean isNoStoreSecureString() {
+		return noStoreSecureString;
+	}
+
+	/**
+	 * Set the value.
+	 *
+	 * @param noStoreSecureString the value
+	 */
+	public void setNoStoreSecureString(final boolean noStoreSecureString) {
+		this.noStoreSecureString = noStoreSecureString;
+	}
+
+	/**
+	 * Get the value.
+	 *
+	 * @return the value
+	 */
+	public boolean isNoPutSecureString() {
+		return noPutSecureString;
+	}
+
+	/**
+	 * Set the value.
+	 *
+	 * @param noPutSecureString the value
+	 */
+	public void setNoPutSecureString(final boolean noPutSecureString) {
+		this.noPutSecureString = noPutSecureString;
+	}
+
+	/**
+	 * Get the value.
+	 *
+	 * @return the value
+	 */
+	public AWSKMSClientBuilder getKmsBuilder() {
+		return kmsBuilder;
+	}
+
+	private void buildAliasList() {
+		if (this.kms == null) {
+			this.kms = this.kmsBuilder.build();
+		}
+
+		final ListAliasesResult result = this.kms.listAliases();
+		for (AliasListEntry entry : result.getAliases()) {
+			if (entry.getTargetKeyId() != null && !entry.getTargetKeyId().isEmpty()) {
+				this.aliasesToKeys.put(entry.getAliasName(), entry.getTargetKeyId());
+				this.keysToAliases.put(entry.getTargetKeyId(), entry.getAliasName());
+			}
+		}
+	}
+
+	String derefAlias(final String alias) {
+		final String fqAlias;
+		if (alias.startsWith("alias/")) {
+			fqAlias = alias;
+		} else {
+			fqAlias = "alias/" + alias;
+		}
+		return this.aliasesToKeys.getOrDefault(fqAlias, fqAlias);
+	}
+
+	String getAliasForKeyId(String keyId) {
+		return this.keysToAliases.getOrDefault(keyId, keyId);
+	}
+
+	static String getCanonicalPath(File file) {
+		try {
+			return file.getCanonicalPath();
+		} catch (IOException e) {
+			e.printStackTrace(System.err);
+		}
+		return file.getAbsolutePath();
+	}
+
+	Iterable<String> getResolvedFilenames() {
+		final File basedir = getConfDir();
+		final String basepath = getCanonicalPath(basedir) + "/";
+		return this.filenames.stream()
+				.map(it -> getCanonicalPath(new File(basedir, it)))
+				.filter(it -> it.startsWith(basepath))
+				.map(it -> it.substring(basepath.length()))
+				.collect(Collectors.toList());
 	}
 
 	/**
@@ -257,18 +367,25 @@ class Main {
 	 */
 	void doMain() throws IOException {
 		this.ssm = this.ssmBuilder.build();
-		if (confDir.exists() && confDir.isDirectory()) {
-			for (String filename : this.filenames) {
-				FileStore fileStore = AbstractFileStore.getStore(confDir, filename);
+		if (getConfDir().exists() && getConfDir().isDirectory()) {
+
+			for (String filename : getResolvedFilenames()) {
+				FileStore fileStore = AbstractFileStore.getStore(getConfDir(), filename);
 				fileStore.load();
 				this.fileStores.put(filename, fileStore);
 			}
 
 			switch (getSsmCmd()) {
 			case GET:
+				if (!isNoStoreSecureString()) {
+					this.buildAliasList();
+				}
 				doGet();
 				break;
 			case PUT:
+				if (!isNoPutSecureString()) {
+					this.buildAliasList();
+				}
 				doPut();
 				break;
 			case DELETE:
@@ -280,7 +397,7 @@ class Main {
 			}
 
 		} else {
-			throw new IOException("Failed to read conf directory " + confDir.getAbsolutePath());
+			throw new IOException("Failed to read conf directory " + getConfDir().getAbsolutePath());
 		}
 	}
 
@@ -289,11 +406,11 @@ class Main {
 	// -----------
 
 	private void doGet() throws IOException {
-		if (confDir.mkdirs() || !confDir.canWrite()) {
-			throw new IOException("Insufficient permissions to manage conf directory " + confDir.getAbsolutePath());
+		if (getConfDir().mkdirs() || !getConfDir().canWrite()) {
+			throw new IOException("Insufficient permissions to manage conf directory " + getConfDir().getAbsolutePath());
 		}
 
-		for (String filename : filenames) {
+		for (String filename : getResolvedFilenames()) {
 			getParamsPerFile(filename, fileStores.get(filename));
 		}
 	}
@@ -311,26 +428,65 @@ class Main {
 
 	/**
 	 * If value is all spaces, subtract a space to reconstruct the original value for export.
+	 *
 	 * @param value parameter value.
 	 * @return unescaped value
 	 */
 	private static String unescapeValueAfterGet(final String value) {
-		return PATTERN_SHOULD_UNESCAPE.matcher(value).matches() ? value.substring(0, value.length() - 1) : value;
+		if (value.isEmpty()) {
+			return value;
+		}
+
+		for (int i = 0; i < value.length(); i++) {
+			if (value.charAt(i) != ' ') {
+				return value;
+			}
+		}
+
+		return value.substring(0, value.length() - 1);
 	}
 
 	/**
 	 * If value is the empty string or all spaces, add a space so the value is non-empty for SSM.
+	 *
 	 * @param value parameter value.
 	 * @return escaped value
 	 */
 	private static String escapeValueBeforePut(final String value) {
-		return PATTERN_SHOULD_ESCAPE.matcher(value).matches() ? value + " " : value;
+		for (int i = 0; i < value.length(); i++) {
+			if (value.charAt(i) != ' ') {
+				return value;
+			}
+		}
+
+		return value + " ";
 	}
 
 	private void getParamsForPath(final String parameterPath, final FileStore fileStore) {
 		findAllParametersForPath(parameterPath).values().stream()
 				.filter(it -> it.getName().startsWith(parameterPath + "/"))
-				.forEach(it -> fileStore.putParam(it.getName().substring(parameterPath.length() + 1), unescapeValueAfterGet(it.getValue())));
+				.forEach(it -> {
+					final String storeKey = it.getName().substring(parameterPath.length() + 1);
+					if (ParameterType.fromValue(it.getType()) != ParameterType.SecureString || !isNoStoreSecureString()) {
+						fileStore.putParam(storeKey, unescapeValueAfterGet(it.getValue()));
+
+						if (ParameterType.fromValue(it.getType()) == ParameterType.SecureString) {
+							final String sidecarStoreKey = storeKey + KEY_ID_SUFFIX;
+							DescribeParametersResult result = ssm.describeParameters(
+									new DescribeParametersRequest()
+											.withFilters(
+													new ParametersFilter().withKey(ParametersFilterKey.Name).withValues(it.getName())));
+
+							Optional<String> paramKeyId = result.getParameters().stream()
+									.findFirst()
+									.flatMap(meta -> Optional.ofNullable(meta.getKeyId()))
+									.map(this::getAliasForKeyId);
+
+							paramKeyId.ifPresent(keyValue -> fileStore.putParam(sidecarStoreKey, keyValue));
+						}
+					}
+
+				});
 	}
 
 	// -----------
@@ -342,29 +498,35 @@ class Main {
 			throw new IllegalArgumentException("put command requires exactly one -s/--starts-with argument.");
 		}
 
-		for (String filename : filenames) {
+		for (String filename : getResolvedFilenames()) {
 			putParamsPerFile(filename, fileStores.get(filename));
 		}
 	}
 
 	private void putParamsPerFile(final String filename, final FileStore store) {
-		for (String key : store.getKeys()) {
+		Set<String> storeKeys = store.getKeys();
+		for (String key : storeKeys.stream().filter(it -> !it.endsWith(KEY_ID_SUFFIX)).collect(Collectors.toSet())) {
+			final String sidecarKeyId = key + KEY_ID_SUFFIX;
 			final String name = buildParameterPath(this.paramPathPrefixes.get(0), filename, key);
+
+			if (isNoPutSecureString() && storeKeys.contains(sidecarKeyId)) {
+				continue;
+			}
+
 			store.getValue(key).ifPresent(value -> {
-				PutParameterRequest req = new PutParameterRequest()
+				final PutParameterRequest req = new PutParameterRequest()
 						.withName(name)
+						.withType(ParameterType.String)
 						.withValue(escapeValueBeforePut(value))
 						.withOverwrite(isOverwritePut());
 
-				if (getKeyId() != null) {
-					req = req
-							.withType(ParameterType.SecureString)
-							.withKeyId(getKeyId());
-				} else {
-					req = req.withType(ParameterType.String);
-				}
+				Optional<String> paramKeyId = Stream.of(Optional.ofNullable(getKeyIdPut()), store.getValue(sidecarKeyId))
+						.filter(Optional::isPresent)
+						.map(Optional::get)
+						.map(this::derefAlias)
+						.findFirst();
 
-				ssm.putParameter(req);
+				ssm.putParameter(paramKeyId.map(keyValue -> req.withType(ParameterType.SecureString).withKeyId(keyValue)).orElse(req));
 			});
 		}
 	}
@@ -378,7 +540,7 @@ class Main {
 			throw new IllegalArgumentException("delete command requires exactly one -s/--starts-with argument.");
 		}
 
-		for (String filename : filenames) {
+		for (String filename : getResolvedFilenames()) {
 			deleteParamsPerFile(filename, fileStores.get(filename));
 		}
 	}
@@ -391,12 +553,12 @@ class Main {
 				.map(key -> buildParameterPath(singlePrefix, filename, key))
 				.collect(Collectors.toSet());
 
-		List<String> parameterNames = findAllParametersForPath(parameterPath).values().stream()
-				.map(Parameter::getName)
-				.filter(names::contains)
-				.collect(Collectors.toList());
+		List<Parameter> parameters = new ArrayList<>(findAllParametersForPath(parameterPath).values());
 
-		ssm.deleteParameters(new DeleteParametersRequest().withNames(parameterNames));
+		ofSubLists(parameters, 10)
+				.map(toDelete -> toDelete.stream().map(Parameter::getName).filter(names::contains).collect(Collectors.toList()))
+				.filter(toDelete -> toDelete.size() > 0)
+				.forEach(toDelete -> ssm.deleteParameters(new DeleteParametersRequest().withNames(toDelete)));
 	}
 
 	// --------------
@@ -408,25 +570,41 @@ class Main {
 			throw new IllegalArgumentException("clear command requires exactly one -s/--starts-with argument.");
 		}
 
-		for (String filename : filenames) {
+		for (String filename : getResolvedFilenames()) {
 			clearParamsPerFile(filename);
 		}
+	}
+
+	private static boolean isClearableParameter(final String pathPrefix, final String paramPath) {
+		return paramPath.startsWith(pathPrefix + "/");
 	}
 
 	private void clearParamsPerFile(final String filename) {
 		final String parameterPath = buildParameterPath(this.getParamPathPrefixes().get(0), filename, null);
 
-		List<String> parameterNames = findAllParametersForPath(parameterPath).values().stream()
-				.map(Parameter::getName)
-				.filter(it -> it.startsWith(parameterPath + "/"))
-				.collect(Collectors.toList());
+		List<Parameter> parameters = new ArrayList<>(findAllParametersForPath(parameterPath).values());
 
-		ssm.deleteParameters(new DeleteParametersRequest().withNames(parameterNames));
+		ofSubLists(parameters, 10)
+				.map(toDelete -> toDelete.stream().map(Parameter::getName).filter(it -> isClearableParameter(parameterPath, it))
+						.collect(Collectors.toList()))
+				.filter(toDelete -> toDelete.size() > 0)
+				.forEach(toDelete -> ssm.deleteParameters(new DeleteParametersRequest().withNames(toDelete)));
 	}
 
 	// --------------
 	// common methods
 	// --------------
+
+	private static <T> Stream<List<T>> ofSubLists(List<T> source, int length) {
+		if (length <= 0)
+			throw new IllegalArgumentException("length = " + length);
+		int size = source.size();
+		if (size <= 0)
+			return Stream.empty();
+		int fullChunks = (size - 1) / length;
+		return IntStream.range(0, fullChunks + 1).mapToObj(
+				n -> source.subList(n * length, n == fullChunks ? size : (n + 1) * length));
+	}
 
 	private Map<String, Parameter> findAllParametersForPath(final String parameterPath) {
 		return findAllParametersForPath(new HashMap<>(), parameterPath, null);
@@ -461,7 +639,7 @@ class Main {
 	 * @throws IOException when something breaks
 	 */
 	public static void main(String[] args) throws IOException {
-		Main spp = new Main(AWSSimpleSystemsManagementClientBuilder.standard());
+		Main spp = new Main(AWSSimpleSystemsManagementClientBuilder.standard(), AWSKMSClientBuilder.standard());
 
 		List<String> argList = Arrays.asList(args);
 		Iterator<String> opts = argList.iterator();
@@ -472,10 +650,13 @@ class Main {
 			case "--profile":
 				System.setProperty("aws.profile", opts.next());
 				spp.getSsmBuilder().setCredentials(new DefaultAWSCredentialsProviderChain());
+				spp.getKmsBuilder().setCredentials(new DefaultAWSCredentialsProviderChain());
 				break;
 			case "-r":
 			case "--region":
-				spp.getSsmBuilder().setRegion(opts.next());
+				String region = opts.next();
+				spp.getSsmBuilder().setRegion(region);
+				spp.getKmsBuilder().setRegion(region);
 				break;
 			case "-b":
 			case "--batch-size":
@@ -499,12 +680,18 @@ class Main {
 				spp.getParamPathPrefixes().add(opts.next());
 				break;
 			case "-k":
-			case "--key-id":
-				spp.setKeyId(opts.next());
+			case "--key-id-put-all":
+				spp.setKeyIdPutAll(opts.next());
 				break;
 			case "-o":
 			case "--overwrite-put":
 				spp.setOverwritePut(true);
+				break;
+			case "--no-store-secure-string":
+				spp.setNoStoreSecureString(true);
+				break;
+			case "--no-put-secure-string":
+				spp.setNoPutSecureString(true);
 				break;
 			case "put":
 				spp.setSsmCmd(SsmCmd.PUT);

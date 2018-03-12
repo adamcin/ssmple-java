@@ -15,8 +15,16 @@
  *
  */
 
+plugins {
+    id "com.jfrog.bintray" version "1.7.3"
+}
+
 apply plugin: "java"
 apply plugin: 'application'
+
+
+//group = 'net.adamcin'
+//version = '0.1.0-SNAPSHOT'
 
 mainClassName = 'net.adamcin.ssmple.Main'
 
@@ -32,8 +40,28 @@ dependencies {
     compile(
             "com.amazonaws:aws-java-sdk-core:${awsSdkVersion}",
             "com.amazonaws:aws-java-sdk-ssm:${awsSdkVersion}",
+            "com.amazonaws:aws-java-sdk-kms:${awsSdkVersion}",
             "org.yaml:snakeyaml:1.20"
     )
+}
+
+bintray {
+    user = System.getenv('BINTRAY_USER')
+    key = System.getenv('BINTRAY_KEY')
+
+    filesSpec {
+        from 'build/distributions'
+        into '.'
+    }
+
+    pkg {
+        repo = 'generic'
+        name = 'ssmple'
+        userOrg = 'adamcin'
+        licenses = ['Apache-2.0']
+        vcsUrl = 'https://github.com/adamcin/ssmple.git'
+    }
+
 }
 
 task wrapper(type: Wrapper) {
