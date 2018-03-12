@@ -130,6 +130,8 @@ class Main {
 
 	private boolean noPutSecureString;
 
+	private boolean clearOnPut;
+
 	private Map<String, FileStore> fileStores = new LinkedHashMap<>();
 
 	private final AWSKMSClientBuilder kmsBuilder;
@@ -302,6 +304,24 @@ class Main {
 	 */
 	public void setNoPutSecureString(final boolean noPutSecureString) {
 		this.noPutSecureString = noPutSecureString;
+	}
+
+	/**
+	 * Get the value.
+	 *
+	 * @return the value
+	 */
+	public boolean isClearOnPut() {
+		return clearOnPut;
+	}
+
+	/**
+	 * Set the value.
+	 *
+	 * @param noClearOnPut the value
+	 */
+	public void setClearOnPut(final boolean noClearOnPut) {
+		this.clearOnPut = noClearOnPut;
 	}
 
 	/**
@@ -485,7 +505,6 @@ class Main {
 							paramKeyId.ifPresent(keyValue -> fileStore.putParam(sidecarStoreKey, keyValue));
 						}
 					}
-
 				});
 	}
 
@@ -499,12 +518,15 @@ class Main {
 		}
 
 		for (String filename : getResolvedFilenames()) {
-			putParamsPerFile(filename, fileStores.get(filename));
+			putParamsPerFile(filename, this.paramPathPrefixes.get(0), fileStores.get(filename));
 		}
 	}
 
-	private void putParamsPerFile(final String filename, final FileStore store) {
+	private void putParamsPerFile(final String filename, final String paramPathPrefix, final FileStore store) {
 		Set<String> storeKeys = store.getKeys();
+		if (isClearOnPut()) {
+			clearParamsPerFile(filename, paramPathPrefix);
+		}
 		for (String key : storeKeys.stream().filter(it -> !it.endsWith(KEY_ID_SUFFIX)).collect(Collectors.toSet())) {
 			final String sidecarKeyId = key + KEY_ID_SUFFIX;
 			final String name = buildParameterPath(this.paramPathPrefixes.get(0), filename, key);
@@ -571,7 +593,7 @@ class Main {
 		}
 
 		for (String filename : getResolvedFilenames()) {
-			clearParamsPerFile(filename);
+			clearParamsPerFile(filename, this.getParamPathPrefixes().get(0));
 		}
 	}
 
@@ -579,8 +601,8 @@ class Main {
 		return paramPath.startsWith(pathPrefix + "/");
 	}
 
-	private void clearParamsPerFile(final String filename) {
-		final String parameterPath = buildParameterPath(this.getParamPathPrefixes().get(0), filename, null);
+	private void clearParamsPerFile(final String filename, final String paramPathPrefix) {
+		final String parameterPath = buildParameterPath(paramPathPrefix, filename, null);
 
 		List<Parameter> parameters = new ArrayList<>(findAllParametersForPath(parameterPath).values());
 
@@ -595,7 +617,7 @@ class Main {
 	// common methods
 	// --------------
 
-	private static <T> Stream<List<T>> ofSubLists(List<T> source, int length) {
+	private static <T> Stream<List<T>> ofSubLists(final List<T> source, final int length) {
 		if (length <= 0)
 			throw new IllegalArgumentException("length = " + length);
 		int size = source.size();
@@ -644,8 +666,9 @@ class Main {
 		List<String> argList = Arrays.asList(args);
 		Iterator<String> opts = argList.iterator();
 		while (opts.hasNext()) {
-			String opt = opts.next();
-			switch (opt) {
+			final String opt = opts.next();
+			final boolean isNoSwitch = opt.startsWith("--no-");
+			switch (isNoSwitch ? opt.replaceFirst("^--no-", "--") : opt) {
 			case "-p":
 			case "--profile":
 				System.setProperty("aws.profile", opts.next());
@@ -685,13 +708,16 @@ class Main {
 				break;
 			case "-o":
 			case "--overwrite-put":
-				spp.setOverwritePut(true);
+				spp.setOverwritePut(!isNoSwitch);
 				break;
-			case "--no-store-secure-string":
-				spp.setNoStoreSecureString(true);
+			case "--clear-on-put":
+				spp.setClearOnPut(!isNoSwitch);
 				break;
-			case "--no-put-secure-string":
-				spp.setNoPutSecureString(true);
+			case "--store-secure-string":
+				spp.setNoStoreSecureString(isNoSwitch);
+				break;
+			case "--put-secure-string":
+				spp.setNoPutSecureString(isNoSwitch);
 				break;
 			case "put":
 				spp.setSsmCmd(SsmCmd.PUT);
